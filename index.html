@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Oud Tuner</title>
 <link rel="manifest" href="manifest.json">
-<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="icon" href="icon.png" type="image/png">
 <meta name="theme-color" content="#8b6914">
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
@@ -223,6 +223,23 @@ header p {
     grid-template-columns: repeat(3, 1fr);
   }
   header h1 { font-size: 1.5rem; }
+
+  #meter-section {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+  #metronome {
+    position: static;
+    transform: none;
+    margin-bottom: 1rem;
+  }
+  #meter-info {
+    position: static;
+    transform: none;
+    text-align: center;
+    margin-top: 0.75rem;
+  }
 }
 </style>
 </head>
@@ -1035,7 +1052,10 @@ window.addEventListener('resize', () => {
   drawBallMeter(detState.displayCents, detState.displayBallScale);
 });
 startTuning();
-if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('sw.js');
+  navigator.serviceWorker.addEventListener('controllerchange', () => location.reload());
+}
 </script>
 </body>
 </html>
