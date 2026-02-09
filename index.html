@@ -1,0 +1,1041 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Oud Tuner</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<meta name="theme-color" content="#8b6914">
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  background: #f5f3ee;
+  color: #333;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 1.5rem 1rem;
+  overflow: hidden;
+}
+
+header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+header h1 {
+  font-size: 2rem;
+  color: #8b6914;
+  letter-spacing: 0.05em;
+  font-family: 'Trebuchet MS', sans-serif;
+  text-transform: lowercase;
+}
+
+header p {
+  font-size: 0.95rem;
+  color: #777;
+  margin-top: 0.25rem;
+}
+
+#meter-section {
+  position: relative;
+  margin-bottom: 1.5rem;
+  text-align: center;
+}
+
+#meter-canvas {
+  display: inline-block;
+}
+
+#meter-info {
+  position: absolute;
+  left: calc(50% + 90px);
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: left;
+  white-space: nowrap;
+}
+
+#detected-note {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #8b6914;
+}
+
+#detected-freq {
+  font-size: 0.95rem;
+  color: #888;
+  margin-top: 0.15rem;
+}
+
+.strings-grid {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 600px;
+  margin-bottom: 0;
+  position: relative;
+  z-index: 1;
+}
+
+.string-btn {
+  background: #fff;
+  border: 2px solid #ddd;
+  border-radius: 8px;
+  padding: 0.75rem 0.25rem;
+  cursor: pointer;
+  text-align: center;
+  transition: border-color 0.15s, background 0.15s;
+  -webkit-tap-highlight-color: transparent;
+  position: relative;
+  overflow: visible;
+}
+
+.string-btn::after,
+.string-btn.double::before {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 100%;
+  width: 1.5px;
+  height: 80vh;
+  background: #c4b07a;
+  pointer-events: none;
+}
+
+.string-btn::after { transform: translateX(-0.75px); }
+.string-btn.double::after { transform: translateX(1px); }
+.string-btn.double::before { transform: translateX(-2.5px); }
+
+.string-btn:hover, .string-btn:focus-visible {
+  border-color: #c9a30e;
+  background: #faf8f0;
+}
+
+.string-btn.active {
+  border-color: #c9a30e;
+  background: #f5efd8;
+}
+
+.string-btn.detected {
+  border-color: #4caf50;
+  background: #eaf7eb;
+}
+
+.string-btn.vibrating::after,
+.string-btn.vibrating::before {
+  filter: url(#string-vibrate);
+}
+
+.string-btn .note {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #8b6914;
+  display: block;
+}
+
+.string-btn .freq {
+  font-size: 0.7rem;
+  color: #999;
+  margin-top: 0.2rem;
+  display: block;
+}
+
+#metronome {
+  position: absolute;
+  right: calc(50% + 90px);
+  top: 50%;
+  transform: translateY(-50%);
+  text-align: center;
+  z-index: 10;
+}
+
+.metro-beats {
+  display: flex;
+  gap: 5px;
+  justify-content: center;
+  margin-bottom: 0.75rem;
+}
+
+.metro-dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #ddd;
+  transition: background 0.05s;
+}
+
+.metro-dot.active { background: #c9a30e; }
+.metro-dot.accent.active { background: #8b6914; }
+
+.metro-bpm {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-bottom: 0.5rem;
+}
+
+.metro-bpm button {
+  background: none;
+  border: 1.5px solid #ccc;
+  border-radius: 4px;
+  width: 22px;
+  height: 22px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  color: #666;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.metro-bpm button:hover { border-color: #999; color: #333; }
+
+.metro-bpm-val {
+  font-size: 0.85rem;
+  color: #666;
+  min-width: 3.5rem;
+}
+
+#metro-toggle {
+  background: none;
+  border: 1.5px solid #ccc;
+  border-radius: 6px;
+  padding: 0.3rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.8rem;
+  color: #666;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#metro-toggle:hover { border-color: #999; color: #333; }
+#metro-toggle.playing { border-color: #c9a30e; color: #8b6914; }
+
+@media (max-width: 600px) {
+  .strings-grid {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  header h1 { font-size: 1.5rem; }
+}
+</style>
+</head>
+<body>
+
+<svg width="0" height="0" style="position:absolute">
+  <filter id="string-vibrate" x="-500%" y="0%" width="1100%" height="100%">
+    <feTurbulence type="turbulence" baseFrequency="0 0.03" numOctaves="3" seed="1" result="turb"/>
+    <feDisplacementMap id="string-displace" in="SourceGraphic" in2="turb" scale="0" xChannelSelector="R" yChannelSelector="G"/>
+  </filter>
+</svg>
+
+<header>
+  <h1>Oud Tuner</h1>
+  <p>Standard Syrian Tuning</p>
+</header>
+
+<section id="meter-section">
+  <div id="metronome">
+    <div class="metro-beats" id="metro-beats"></div>
+    <div class="metro-bpm">
+      <button id="bpm-down" aria-label="Decrease tempo">&minus;</button>
+      <span class="metro-bpm-val" id="bpm-display">80 bpm</span>
+      <button id="bpm-up" aria-label="Increase tempo">+</button>
+    </div>
+    <button id="metro-toggle">▶ Start</button>
+  </div>
+  <canvas id="meter-canvas" width="160" height="320" role="img" aria-label="Tuning meter"></canvas>
+  <div id="meter-info">
+    <div id="detected-note">—</div>
+    <div id="detected-freq"></div>
+  </div>
+</section>
+
+<div class="strings-grid" id="strings-grid"></div>
+
+<script>
+// ── Configuration ──
+
+// Canvas & layout
+const CANVAS_W = 160;
+const CANVAS_H = 320;
+const TRACK_W = 40;
+const TRACK_H = 260;
+const TRACK_RADIUS = 12;
+const BALL_RADIUS = 24;
+const BALL_GLOW_BLUR = 22;
+const BALL_HIGHLIGHT_RATIO = 0.35;
+const BALL_HIGHLIGHT_OFFSET = 5;
+const MAX_TRAVEL = 120;
+const MAX_CENTS = 50;
+const TICK_LENGTH = 6;
+const TARGET_LINE_OVERHANG = 8;
+const LABEL_OFFSET_TOP = 12;
+const LABEL_OFFSET_BOTTOM = 14;
+
+// Colors
+const COLOR_GREEN = '#4caf50';
+const COLOR_YELLOW = '#c9a30e';
+const COLOR_RED = '#e05050';
+const COLOR_TRACK_FILL = '#e8e4dc';
+const COLOR_TICK = '#bbb';
+const COLOR_TICK_LABEL = '#999';
+const COLOR_HINT_LABEL = '#aaa';
+const COLOR_NOTE_DEFAULT = '#8b6914';
+const COLOR_BALL_HIGHLIGHT = 'rgba(255,255,255,0.25)';
+
+// Tuning thresholds (cents)
+const CENTS_IN_TUNE = 5;
+const CENTS_CLOSE = 15;
+
+// Audio
+const TONE_VOLUME = 0.35;
+const TONE_DURATION = 2.0;
+
+// Oud synthesis
+const OUD_HARMONICS = [
+  { n: 1, amp: 0.40, decay: 1.8 },
+  { n: 2, amp: 0.30, decay: 1.2 },
+  { n: 3, amp: 0.22, decay: 0.9 },
+  { n: 4, amp: 0.15, decay: 0.7 },
+  { n: 5, amp: 0.10, decay: 0.5 },
+  { n: 6, amp: 0.06, decay: 0.35 },
+  { n: 7, amp: 0.03, decay: 0.25 },
+  { n: 8, amp: 0.015, decay: 0.18 },
+];
+const OUD_MASTER_GAIN = TONE_VOLUME / OUD_HARMONICS.reduce((s, h) => s + h.amp, 0);
+const OUD_PLUCK_DURATION = 0.05;
+const OUD_PLUCK_DECAY = 0.03;
+const OUD_PLUCK_AMP = 0.4;
+const OUD_PLUCK_FILTER_Q = 2;
+
+const FFT_SIZE = 8192;
+const RMS_THRESHOLD_DB = -40;  // minimum signal level in decibels
+const TRIM_THRESHOLD = 0.2;
+
+// Signal isolation
+const MIN_CORRELATION = 0.85;      // autocorrelation confidence threshold (0-1)
+const NOTE_HOLD_FRAMES = 8;        // frames a new note must be closest before switching
+const SIGNAL_LOST_FRAMES = 15;     // frames of no detection before clearing display
+
+// Smoothing
+const FREQ_SMOOTH_NEW = 0.35;
+const FREQ_SMOOTH_OLD = 1 - FREQ_SMOOTH_NEW;
+const LERP_FACTOR = 0.03;
+const BALL_SCALE_SPEED = 0.08;
+
+// Subharmonic detection
+const SUBHARMONIC_THRESHOLD = 0.9;
+const SUBHARMONIC_MARGIN = 0.1;
+
+// Metronome
+const METRO_BEATS = 8;
+const METRO_BPM_MIN = 30;
+const METRO_BPM_MAX = 240;
+const METRO_BPM_STEP = 5;
+const METRO_CLICK_DURATION = 0.05;
+
+// ── String definitions (Syrian tuning) ──
+const STRINGS = [
+  { course: 1, note: 'C2', freq: 65.41 },
+  { course: 2, note: 'F2', freq: 87.31 },
+  { course: 3, note: 'A2', freq: 110.00 },
+  { course: 4, note: 'D3', freq: 146.83 },
+  { course: 5, note: 'G3', freq: 196.00 },
+  { course: 6, note: 'C4', freq: 261.63 },
+];
+
+// ── DOM references ──
+const stringsGrid = document.getElementById('strings-grid');
+const meterCanvas = document.getElementById('meter-canvas');
+const detectedNoteEl = document.getElementById('detected-note');
+const detectedFreqEl = document.getElementById('detected-freq');
+
+// ── State ──
+let audioCtx = null;
+let activeOsc = null;
+let activeBtn = null;
+let analyser = null;
+let smoothedFreq = 0;
+
+// ── String vibration animation (sinusoidal displacement) ──
+const stringDisplace = document.getElementById('string-displace');
+const vibState = {
+  frameId: null,
+  start: 0,
+  prevTs: 0,
+  phase: 0,
+  decay: false,
+  duration: 0,
+};
+
+const VIBRATE_SCALE_MAX = 5;
+const VIBRATE_FREQ_START = 30;  // oscillation Hz at full amplitude
+const VIBRATE_FREQ_END = 6;    // oscillation Hz near silence
+
+function vibrateLoop(ts) {
+  if (!vibState.start) {
+    vibState.start = ts;
+    vibState.prevTs = ts;
+  }
+  const dt = (ts - vibState.prevTs) / 1000;
+  vibState.prevTs = ts;
+  const elapsed = (ts - vibState.start) / 1000;
+
+  let amplitude = 1;
+  if (vibState.decay) {
+    amplitude = Math.max(0, 1 - elapsed / vibState.duration);
+    if (amplitude <= 0.01) {
+      stringDisplace.setAttribute('scale', '0');
+      vibState.frameId = null;
+      return;
+    }
+  }
+
+  const freq = VIBRATE_FREQ_END + (VIBRATE_FREQ_START - VIBRATE_FREQ_END) * amplitude;
+  vibState.phase += 2 * Math.PI * freq * dt;
+  const scale = VIBRATE_SCALE_MAX * amplitude * Math.sin(vibState.phase);
+  stringDisplace.setAttribute('scale', scale.toFixed(2));
+
+  vibState.frameId = requestAnimationFrame(vibrateLoop);
+}
+
+function startVibrate(decayDuration) {
+  vibState.decay = decayDuration != null && decayDuration > 0;
+  vibState.duration = decayDuration || 0;
+  if (!vibState.frameId) {
+    vibState.start = 0;
+    vibState.phase = 0;
+    vibState.prevTs = 0;
+    vibState.frameId = requestAnimationFrame(vibrateLoop);
+  }
+}
+
+function stopVibrate() {
+  if (vibState.frameId) {
+    cancelAnimationFrame(vibState.frameId);
+    vibState.frameId = null;
+  }
+  stringDisplace.setAttribute('scale', '0');
+}
+
+// ── Audio context (lazy init on user gesture) ──
+function getAudioCtx() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === 'suspended') {
+    audioCtx.resume();
+  }
+  return audioCtx;
+}
+
+// ── Oud tone synthesis (additive harmonics + pluck transient) ──
+function createOudTone(ctx, freq) {
+  const now = ctx.currentTime;
+  const masterGain = ctx.createGain();
+  masterGain.gain.setValueAtTime(OUD_MASTER_GAIN, now);
+  masterGain.gain.setValueAtTime(OUD_MASTER_GAIN, now + TONE_DURATION - 0.05);
+  masterGain.gain.linearRampToValueAtTime(0, now + TONE_DURATION);
+  masterGain.connect(ctx.destination);
+
+  const sources = [];
+
+  // Harmonic oscillators with exponential decay
+  for (const h of OUD_HARMONICS) {
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq * h.n;
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(h.amp, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + h.decay);
+    osc.connect(gain);
+    gain.connect(masterGain);
+    osc.start(now);
+    osc.stop(now + TONE_DURATION);
+    sources.push(osc);
+  }
+
+  // Pluck noise burst
+  const bufferLen = Math.ceil(ctx.sampleRate * OUD_PLUCK_DURATION);
+  const noiseBuffer = ctx.createBuffer(1, bufferLen, ctx.sampleRate);
+  const data = noiseBuffer.getChannelData(0);
+  for (let i = 0; i < bufferLen; i++) data[i] = Math.random() * 2 - 1;
+
+  const noiseSrc = ctx.createBufferSource();
+  noiseSrc.buffer = noiseBuffer;
+  const bpf = ctx.createBiquadFilter();
+  bpf.type = 'bandpass';
+  bpf.frequency.value = freq * 3;
+  bpf.Q.value = OUD_PLUCK_FILTER_Q;
+  const noiseGain = ctx.createGain();
+  noiseGain.gain.setValueAtTime(OUD_PLUCK_AMP, now);
+  noiseGain.gain.exponentialRampToValueAtTime(0.001, now + OUD_PLUCK_DECAY);
+  noiseSrc.connect(bpf);
+  bpf.connect(noiseGain);
+  noiseGain.connect(masterGain);
+  noiseSrc.start(now);
+  sources.push(noiseSrc);
+
+  // Facade exposing .stop() and .onended
+  let ended = false;
+  let onendedCb = null;
+  const facade = {
+    set onended(fn) { onendedCb = fn; },
+    get onended() { return onendedCb; },
+    stop() {
+      if (ended) return;
+      ended = true;
+      sources.forEach(s => { try { s.stop(); } catch {} });
+      masterGain.disconnect();
+    },
+  };
+
+  // Fire onended when the first harmonic osc ends (all share the same stop time)
+  sources[0].onended = () => {
+    ended = true;
+    masterGain.disconnect();
+    if (onendedCb) onendedCb();
+  };
+
+  return facade;
+}
+
+// ── Reference tone playback ──
+function playTone(freq, btnEl) {
+  const ctx = getAudioCtx();
+
+  if (activeOsc) {
+    try { activeOsc.stop(); } catch {}
+    activeOsc = null;
+  }
+  if (activeBtn) {
+    activeBtn.classList.remove('active', 'vibrating');
+    activeBtn = null;
+  }
+
+  const tone = createOudTone(ctx, freq);
+  activeOsc = tone;
+  btnEl.classList.add('active', 'vibrating');
+  activeBtn = btnEl;
+  startVibrate(TONE_DURATION);
+
+  tone.onended = () => {
+    btnEl.classList.remove('active', 'vibrating');
+    if (activeOsc === tone) activeOsc = null;
+    if (activeBtn === btnEl) activeBtn = null;
+    if (!document.querySelector('.string-btn.vibrating')) stopVibrate();
+  };
+}
+
+// ── Build string buttons ──
+const stringBtns = STRINGS.map(s => {
+  const btn = document.createElement('button');
+  btn.className = 'string-btn' + (s.course > 1 ? ' double' : '');
+  btn.innerHTML = `<span class="note">${s.note}</span><span class="freq">${s.freq} Hz</span>`;
+  btn.addEventListener('click', () => playTone(s.freq, btn));
+  stringsGrid.appendChild(btn);
+  return btn;
+});
+
+// ── Keyboard shortcuts for string tones ──
+const KEY_STRING_MAP = { 'c': 0, 'f': 1, 'a': 2, 'd': 3, 'g': 4, 's': 5 };
+document.addEventListener('keydown', (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const idx = KEY_STRING_MAP[e.key.toLowerCase()];
+  if (idx !== undefined) {
+    playTone(STRINGS[idx].freq, stringBtns[idx]);
+  }
+});
+
+// ── Pitch detection (ACF2+ autocorrelation) ──
+function autoCorrelate(buf, sampleRate) {
+  const SIZE = buf.length;
+  let rms = 0;
+  for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
+  rms = Math.sqrt(rms / SIZE);
+  const rmsDb = 20 * Math.log10(rms || 1e-10);
+  if (rmsDb < RMS_THRESHOLD_DB) return -1;
+
+  let r1 = 0, r2 = SIZE - 1;
+  for (let i = 0; i < SIZE / 2; i++) {
+    if (Math.abs(buf[i]) > TRIM_THRESHOLD) { r1 = i; break; }
+  }
+  for (let i = SIZE - 1; i >= SIZE / 2; i--) {
+    if (Math.abs(buf[i]) > TRIM_THRESHOLD) { r2 = i; break; }
+  }
+
+  const trimmed = buf.slice(r1, r2 + 1);
+  const len = trimmed.length;
+
+  const c = new Float32Array(len);
+  for (let i = 0; i < len; i++) {
+    let sum = 0;
+    for (let j = 0; j < len - i; j++) {
+      sum += trimmed[j] * trimmed[j + i];
+    }
+    c[i] = sum;
+  }
+
+  let d = 0;
+  while (c[d] > c[d + 1] && d < len - 1) d++;
+
+  let maxVal = -1, maxPos = -1;
+  for (let i = d; i < len; i++) {
+    if (c[i] > maxVal) {
+      maxVal = c[i];
+      maxPos = i;
+    }
+  }
+
+  // Subharmonic check: the strongest peak may be a harmonic.
+  // Look for significant peaks at 2× and 3× the lag (lower freq = true fundamental).
+  for (const mult of [2, 3]) {
+    const subLag = Math.round(maxPos * mult);
+    const margin = Math.round(maxPos * SUBHARMONIC_MARGIN);
+    const lo = Math.max(d, subLag - margin);
+    const hi = Math.min(len - 1, subLag + margin);
+    if (hi >= len) continue;
+
+    let bestVal = -1, bestPos = -1;
+    for (let i = lo; i <= hi; i++) {
+      if (c[i] > bestVal) { bestVal = c[i]; bestPos = i; }
+    }
+    if (bestVal > maxVal * SUBHARMONIC_THRESHOLD) {
+      maxVal = bestVal;
+      maxPos = bestPos;
+    }
+  }
+
+  if (maxPos > 0 && maxPos < len - 1) {
+    const a = c[maxPos - 1];
+    const b = c[maxPos];
+    const cVal = c[maxPos + 1];
+    const shift = (a - cVal) / (2 * (a - 2 * b + cVal));
+    if (Math.abs(shift) < 1) {
+      maxPos += shift;
+    }
+  }
+
+  const T0 = maxPos;
+  if (T0 === 0 || T0 === -1) return -1;
+
+  // Confidence check: reject weak or ambiguous detections
+  const confidence = c[Math.round(T0)] / c[0];
+  if (confidence < MIN_CORRELATION) return -1;
+
+  return sampleRate / T0;
+}
+
+// ── Frequency → nearest string + cents ──
+function findNearestString(freq) {
+  let bestIdx = 0;
+  let bestCents = Infinity;
+  for (let i = 0; i < STRINGS.length; i++) {
+    const cents = 1200 * Math.log2(freq / STRINGS[i].freq);
+    if (Math.abs(cents) < Math.abs(bestCents)) {
+      bestCents = cents;
+      bestIdx = i;
+    }
+  }
+  return { string: STRINGS[bestIdx], cents: bestCents, index: bestIdx };
+}
+
+// ── Octave error correction ──
+function correctOctaveErrors(freq) {
+  const candidates = [freq, freq / 2, freq * 2];
+  let bestFreq = candidates[0];
+  let bestCents = Math.abs(findNearestString(candidates[0]).cents);
+  for (let i = 1; i < candidates.length; i++) {
+    const cents = Math.abs(findNearestString(candidates[i]).cents);
+    if (cents < bestCents) {
+      bestCents = cents;
+      bestFreq = candidates[i];
+    }
+  }
+  return bestFreq;
+}
+
+// ── Meter drawing ──
+const CTX = meterCanvas.getContext('2d');
+
+function setupCanvas() {
+  const dpr = window.devicePixelRatio || 1;
+  meterCanvas.width = CANVAS_W * dpr;
+  meterCanvas.height = CANVAS_H * dpr;
+  meterCanvas.style.width = CANVAS_W + 'px';
+  meterCanvas.style.height = CANVAS_H + 'px';
+  CTX.setTransform(dpr, 0, 0, dpr, 0, 0);
+}
+
+function centsColor(cents) {
+  const a = Math.abs(cents);
+  if (a < CENTS_IN_TUNE) return COLOR_GREEN;
+  if (a < CENTS_CLOSE) return COLOR_YELLOW;
+  return COLOR_RED;
+}
+
+// ── Detection state ──
+const detState = {
+  targetCents: 0,
+  displayCents: 0,
+  drawFrameId: null,
+  currentNoteIndex: -1,     // index of the currently displayed note
+  candidateNoteIndex: -1,   // index of the note being considered
+  candidateCount: 0,        // frames the candidate has been consistent
+  noSignalCount: 0,         // frames since last valid detection
+  targetBallScale: 0,       // 1 when signal detected, 0 when lost
+  displayBallScale: 0,      // smoothed scale for shrink animation
+};
+
+function drawBallMeter(cents, ballScale) {
+  const centerX = CANVAS_W / 2;
+  const centerY = CANVAS_H / 2;
+  const trackBottom = centerY + TRACK_H / 2;
+  const trackX = centerX - TRACK_W / 2;
+  const trackY = centerY - TRACK_H / 2;
+
+  CTX.clearRect(0, 0, CANVAS_W, CANVAS_H);
+
+  // Draw vertical track (rounded rect)
+  CTX.beginPath();
+  CTX.moveTo(trackX + TRACK_RADIUS, trackY);
+  CTX.lineTo(trackX + TRACK_W - TRACK_RADIUS, trackY);
+  CTX.quadraticCurveTo(trackX + TRACK_W, trackY, trackX + TRACK_W, trackY + TRACK_RADIUS);
+  CTX.lineTo(trackX + TRACK_W, trackBottom - TRACK_RADIUS);
+  CTX.quadraticCurveTo(trackX + TRACK_W, trackBottom, trackX + TRACK_W - TRACK_RADIUS, trackBottom);
+  CTX.lineTo(trackX + TRACK_RADIUS, trackBottom);
+  CTX.quadraticCurveTo(trackX, trackBottom, trackX, trackBottom - TRACK_RADIUS);
+  CTX.lineTo(trackX, trackY + TRACK_RADIUS);
+  CTX.quadraticCurveTo(trackX, trackY, trackX + TRACK_RADIUS, trackY);
+  CTX.closePath();
+  CTX.fillStyle = COLOR_TRACK_FILL;
+  CTX.fill();
+
+  // Draw target line (dashed, at center)
+  CTX.save();
+  CTX.setLineDash([6, 4]);
+  CTX.beginPath();
+  CTX.moveTo(trackX - TARGET_LINE_OVERHANG, centerY);
+  CTX.lineTo(trackX + TRACK_W + TARGET_LINE_OVERHANG, centerY);
+  CTX.strokeStyle = COLOR_GREEN;
+  CTX.lineWidth = 2;
+  CTX.stroke();
+  CTX.restore();
+
+  // Draw tick marks and labels on the left side
+  const ticks = [-MAX_CENTS, -MAX_CENTS / 2, 0, MAX_CENTS / 2, MAX_CENTS];
+  CTX.font = '10px -apple-system, sans-serif';
+  CTX.textBaseline = 'middle';
+  ticks.forEach(t => {
+    const y = centerY - (t / MAX_CENTS) * MAX_TRAVEL;
+    const tickLeft = trackX - TICK_LENGTH;
+
+    CTX.beginPath();
+    CTX.moveTo(tickLeft, y);
+    CTX.lineTo(trackX, y);
+    CTX.strokeStyle = t === 0 ? COLOR_GREEN : COLOR_TICK;
+    CTX.lineWidth = t === 0 ? 2 : 1;
+    CTX.stroke();
+
+    CTX.fillStyle = COLOR_TICK_LABEL;
+    CTX.textAlign = 'right';
+    CTX.fillText((t > 0 ? '+' : '') + t, tickLeft - 3, y);
+  });
+
+  // "Sharp ↑" near top, "↓ Flat" near bottom
+  CTX.fillStyle = COLOR_HINT_LABEL;
+  CTX.font = '11px -apple-system, sans-serif';
+  CTX.textBaseline = 'middle';
+  CTX.textAlign = 'center';
+  CTX.fillText('Sharp \u2191', centerX, trackY - LABEL_OFFSET_TOP);
+  CTX.fillText('\u2193 Flat', centerX, trackBottom + LABEL_OFFSET_BOTTOM);
+
+  if (ballScale > 0.01) {
+    // Calculate ball Y position
+    const clampedCents = Math.max(-MAX_CENTS, Math.min(MAX_CENTS, cents));
+    const ballY = centerY - (clampedCents / MAX_CENTS) * MAX_TRAVEL;
+    const color = centsColor(cents);
+    const r = BALL_RADIUS * ballScale;
+
+    // Draw ball with glow
+    CTX.save();
+    CTX.shadowColor = color;
+    CTX.shadowBlur = BALL_GLOW_BLUR * ballScale;
+    CTX.beginPath();
+    CTX.arc(centerX, ballY, r, 0, Math.PI * 2);
+    CTX.fillStyle = color;
+    CTX.fill();
+    CTX.restore();
+
+    // Ball highlight (subtle sheen)
+    CTX.beginPath();
+    CTX.arc(centerX - BALL_HIGHLIGHT_OFFSET * ballScale, ballY - BALL_HIGHLIGHT_OFFSET * ballScale, r * BALL_HIGHLIGHT_RATIO, 0, Math.PI * 2);
+    CTX.fillStyle = COLOR_BALL_HIGHLIGHT;
+    CTX.fill();
+  }
+}
+
+// ── Continuous draw loop (animates ball smoothly) ──
+function drawLoop() {
+  detState.displayCents += (detState.targetCents - detState.displayCents) * LERP_FACTOR;
+  detState.displayBallScale += (detState.targetBallScale - detState.displayBallScale) * BALL_SCALE_SPEED;
+  drawBallMeter(detState.displayCents, detState.displayBallScale);
+
+  detState.drawFrameId = requestAnimationFrame(drawLoop);
+}
+
+function startDrawLoop() {
+  if (detState.drawFrameId) return;
+  detState.drawFrameId = requestAnimationFrame(drawLoop);
+}
+
+// ── Detection state helpers ──
+function clearDetectedBtns() {
+  stringBtns.forEach(b => b.classList.remove('detected', 'vibrating'));
+}
+
+function resetDetectionState() {
+  detState.currentNoteIndex = -1;
+  detState.candidateNoteIndex = -1;
+  detState.candidateCount = 0;
+  detState.noSignalCount = 0;
+  detState.targetCents = 0;
+  detState.targetBallScale = 0;
+  detState.displayBallScale = 0;
+  smoothedFreq = 0;
+  clearDetectedBtns();
+  stopVibrate();
+}
+
+function clearMeterDisplay() {
+  detectedNoteEl.textContent = '—';
+  detectedNoteEl.style.color = COLOR_NOTE_DEFAULT;
+  detectedFreqEl.textContent = '';
+}
+
+// ── Pitch detection helpers ──
+function detectPitch(buf) {
+  let freq = autoCorrelate(buf, audioCtx.sampleRate);
+  if (freq <= 0) return null;
+
+  freq = correctOctaveErrors(freq);
+
+  if (smoothedFreq === 0) {
+    smoothedFreq = freq;
+  } else {
+    smoothedFreq = FREQ_SMOOTH_NEW * freq + FREQ_SMOOTH_OLD * smoothedFreq;
+  }
+
+  return smoothedFreq;
+}
+
+function updateHysteresis(resultIndex) {
+  if (resultIndex !== detState.currentNoteIndex) {
+    if (resultIndex === detState.candidateNoteIndex) {
+      detState.candidateCount++;
+    } else {
+      detState.candidateNoteIndex = resultIndex;
+      detState.candidateCount = 1;
+    }
+    if (detState.candidateCount >= NOTE_HOLD_FRAMES) {
+      detState.currentNoteIndex = detState.candidateNoteIndex;
+      detState.candidateCount = 0;
+    }
+  }
+}
+
+function updateDetectionDisplay(cents, color) {
+  const displayString = STRINGS[detState.currentNoteIndex];
+
+  clearDetectedBtns();
+  stringBtns[detState.currentNoteIndex].classList.add('detected', 'vibrating');
+  startVibrate();
+
+  detectedNoteEl.textContent = displayString.note;
+  detectedNoteEl.style.color = color;
+  detectedFreqEl.textContent = smoothedFreq.toFixed(1) + ' Hz';
+}
+
+// ── Tuning loop (pitch detection only) ──
+function tuningLoop() {
+  // Skip detection while a reference tone is playing (speaker→mic feedback)
+  if (activeOsc) {
+    requestAnimationFrame(tuningLoop);
+    return;
+  }
+
+  const buf = new Float32Array(analyser.fftSize);
+  analyser.getFloatTimeDomainData(buf);
+
+  const freq = detectPitch(buf);
+
+  if (freq !== null) {
+    detState.noSignalCount = 0;
+    const result = findNearestString(freq);
+    const cents = result.cents;
+    const color = centsColor(cents);
+
+    detState.targetCents = cents;
+    updateHysteresis(result.index);
+
+    detState.targetBallScale = 1;
+    if (detState.currentNoteIndex >= 0) {
+      updateDetectionDisplay(cents, color);
+    }
+  } else {
+    detState.noSignalCount++;
+    if (detState.noSignalCount >= SIGNAL_LOST_FRAMES) {
+      detState.targetBallScale = 0;
+      if (detState.displayBallScale <= 0.01) {
+        resetDetectionState();
+        clearMeterDisplay();
+      }
+    }
+  }
+
+  requestAnimationFrame(tuningLoop);
+}
+
+// ── Start tuning ──
+async function startTuning() {
+  const ctx = getAudioCtx();
+
+  let micStream;
+  try {
+    micStream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: false,
+        autoGainControl: false,
+        noiseSuppression: false,
+      }
+    });
+  } catch (err) {
+    detectedNoteEl.textContent = 'Mic access denied';
+    detectedNoteEl.style.color = COLOR_RED;
+    return;
+  }
+
+  const micSource = ctx.createMediaStreamSource(micStream);
+  analyser = ctx.createAnalyser();
+  analyser.fftSize = FFT_SIZE;
+  micSource.connect(analyser);
+
+  smoothedFreq = 0;
+  startDrawLoop();
+  tuningLoop();
+}
+
+// ── Metronome ──
+const metroBeatsEl = document.getElementById('metro-beats');
+const bpmDisplay = document.getElementById('bpm-display');
+const metroToggle = document.getElementById('metro-toggle');
+
+const metState = {
+  bpm: 80,
+  beat: -1,
+  running: false,
+  timeoutId: null,
+  startTime: 0,
+  nextBeat: 0,
+};
+
+const metroDots = Array.from({ length: METRO_BEATS }, () => {
+  const dot = document.createElement('div');
+  dot.className = 'metro-dot';
+  metroBeatsEl.appendChild(dot);
+  return dot;
+});
+
+function metroClick(accent) {
+  const ctx = getAudioCtx();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  osc.frequency.value = accent ? 1200 : 800;
+  osc.type = 'sine';
+  gain.gain.setValueAtTime(accent ? 0.25 : 0.15, ctx.currentTime);
+  gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + METRO_CLICK_DURATION);
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+  osc.start();
+  osc.stop(ctx.currentTime + METRO_CLICK_DURATION);
+}
+
+function metroTick() {
+  metState.beat = (metState.beat + 1) % METRO_BEATS;
+  const isAccent = metState.beat === 0;
+  metroDots.forEach((d, i) => {
+    d.classList.toggle('active', i === metState.beat);
+    d.classList.toggle('accent', i === metState.beat && isAccent);
+  });
+  metroClick(isAccent);
+}
+
+function scheduleNextTick() {
+  metState.nextBeat++;
+  const nextTime = metState.startTime + metState.nextBeat * (60000 / metState.bpm);
+  metState.timeoutId = setTimeout(() => {
+    metroTick();
+    if (metState.running) scheduleNextTick();
+  }, Math.max(0, nextTime - performance.now()));
+}
+
+function resetMetroTiming() {
+  metState.startTime = performance.now();
+  metState.nextBeat = 0;
+}
+
+function startMetro() {
+  metState.running = true;
+  metState.beat = -1;
+  resetMetroTiming();
+  metroTick();
+  scheduleNextTick();
+  metroToggle.textContent = '\u25A0 Stop';
+  metroToggle.classList.add('playing');
+}
+
+function stopMetro() {
+  metState.running = false;
+  clearTimeout(metState.timeoutId);
+  metState.timeoutId = null;
+  metState.beat = -1;
+  metroDots.forEach(d => d.classList.remove('active', 'accent'));
+  metroToggle.textContent = '\u25B6 Start';
+  metroToggle.classList.remove('playing');
+}
+
+function updateBpm(newBpm) {
+  metState.bpm = Math.max(METRO_BPM_MIN, Math.min(METRO_BPM_MAX, newBpm));
+  bpmDisplay.textContent = metState.bpm + ' bpm';
+  if (metState.running) {
+    clearTimeout(metState.timeoutId);
+    resetMetroTiming();
+    scheduleNextTick();
+  }
+}
+
+metroToggle.addEventListener('click', () => {
+  if (metState.running) stopMetro(); else startMetro();
+});
+document.getElementById('bpm-down').addEventListener('click', () => updateBpm(metState.bpm - METRO_BPM_STEP));
+document.getElementById('bpm-up').addEventListener('click', () => updateBpm(metState.bpm + METRO_BPM_STEP));
+
+// ── Init ──
+setupCanvas();
+drawBallMeter(0, 0);
+window.addEventListener('resize', () => {
+  setupCanvas();
+  drawBallMeter(detState.displayCents, detState.displayBallScale);
+});
+startTuning();
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
