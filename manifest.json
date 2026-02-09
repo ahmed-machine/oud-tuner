@@ -1,0 +1,11 @@
+{
+  "name": "Oud Tuner",
+  "short_name": "Oud Tuner",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#f5f3ee",
+  "theme_color": "#8b6914",
+  "icons": [
+    { "src": "icon.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}
