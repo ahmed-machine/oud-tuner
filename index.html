@@ -334,22 +334,22 @@ const OUD_PLUCK_FILTER_Q = 2;
 
 const FFT_SIZE = 8192;
 const RMS_THRESHOLD_DB = -40;  // minimum signal level in decibels
-const TRIM_THRESHOLD = 0.2;
+// YIN pitch detection
+const YIN_THRESHOLD = 0.15;       // CMNDF absolute threshold (paper recommends 0.10-0.20)
+const YIN_CONFIDENCE_MAX = 0.30;  // reject if best CMNDF dip exceeds this
+const YIN_MIN_FREQ = 55;          // Hz — search floor (below C2=65.41)
+const YIN_MAX_FREQ = 600;         // Hz — search ceiling (above C4=261.63)
 
 // Signal isolation
-const MIN_CORRELATION = 0.85;      // autocorrelation confidence threshold (0-1)
 const NOTE_HOLD_FRAMES = 8;        // frames a new note must be closest before switching
 const SIGNAL_LOST_FRAMES = 15;     // frames of no detection before clearing display
+const OFF_STRING_CENTS = 50;       // cents threshold to consider pitch "not on a string"
 
 // Smoothing
 const FREQ_SMOOTH_NEW = 0.35;
 const FREQ_SMOOTH_OLD = 1 - FREQ_SMOOTH_NEW;
-const LERP_FACTOR = 0.03;
+const LERP_FACTOR = 0.08;
 const BALL_SCALE_SPEED = 0.08;
-
-// Subharmonic detection
-const SUBHARMONIC_THRESHOLD = 0.9;
-const SUBHARMONIC_MARGIN = 0.1;
 
 // Metronome
 const METRO_BEATS = 8;
@@ -571,83 +571,85 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Pitch detection (ACF2+ autocorrelation) ──
-function autoCorrelate(buf, sampleRate) {
+// ── Pitch detection (YIN algorithm) ──
+// de Cheveigné, A. & Kawahara, H. (2002). "YIN, a fundamental frequency
+// estimator for speech and music." JASA 111(4), 1917-1930.
+// https://doi.org/10.1121/1.1458024
+function yinDetect(buf, sampleRate) {
   const SIZE = buf.length;
+
+  // RMS gate — reject silence below threshold
   let rms = 0;
   for (let i = 0; i < SIZE; i++) rms += buf[i] * buf[i];
   rms = Math.sqrt(rms / SIZE);
   const rmsDb = 20 * Math.log10(rms || 1e-10);
   if (rmsDb < RMS_THRESHOLD_DB) return -1;
 
-  let r1 = 0, r2 = SIZE - 1;
-  for (let i = 0; i < SIZE / 2; i++) {
-    if (Math.abs(buf[i]) > TRIM_THRESHOLD) { r1 = i; break; }
-  }
-  for (let i = SIZE - 1; i >= SIZE / 2; i--) {
-    if (Math.abs(buf[i]) > TRIM_THRESHOLD) { r2 = i; break; }
-  }
+  // Lag bounds from frequency limits
+  const tauMin = Math.floor(sampleRate / YIN_MAX_FREQ);
+  const tauMax = Math.min(Math.ceil(sampleRate / YIN_MIN_FREQ), Math.floor(SIZE / 2));
+  if (tauMax <= tauMin) return -1;
 
-  const trimmed = buf.slice(r1, r2 + 1);
-  const len = trimmed.length;
-
-  const c = new Float32Array(len);
-  for (let i = 0; i < len; i++) {
+  // Step 1: Difference function  d(tau) = SUM[ (x[j] - x[j+tau])^2 ]
+  const diff = new Float32Array(tauMax + 1);
+  for (let tau = 1; tau <= tauMax; tau++) {
     let sum = 0;
-    for (let j = 0; j < len - i; j++) {
-      sum += trimmed[j] * trimmed[j + i];
+    for (let j = 0; j < SIZE - tau; j++) {
+      const delta = buf[j] - buf[j + tau];
+      sum += delta * delta;
     }
-    c[i] = sum;
+    diff[tau] = sum;
   }
 
-  let d = 0;
-  while (c[d] > c[d + 1] && d < len - 1) d++;
-
-  let maxVal = -1, maxPos = -1;
-  for (let i = d; i < len; i++) {
-    if (c[i] > maxVal) {
-      maxVal = c[i];
-      maxPos = i;
-    }
+  // Step 2: Cumulative mean normalized difference function (CMNDF)
+  // d'(tau) = d(tau) * tau / runningSum, with d'(0) = 1
+  const cmndf = new Float32Array(tauMax + 1);
+  cmndf[0] = 1;
+  let runningSum = 0;
+  for (let tau = 1; tau <= tauMax; tau++) {
+    runningSum += diff[tau];
+    cmndf[tau] = runningSum > 0 ? diff[tau] * tau / runningSum : 1;
   }
 
-  // Subharmonic check: the strongest peak may be a harmonic.
-  // Look for significant peaks at 2× and 3× the lag (lower freq = true fundamental).
-  for (const mult of [2, 3]) {
-    const subLag = Math.round(maxPos * mult);
-    const margin = Math.round(maxPos * SUBHARMONIC_MARGIN);
-    const lo = Math.max(d, subLag - margin);
-    const hi = Math.min(len - 1, subLag + margin);
-    if (hi >= len) continue;
-
-    let bestVal = -1, bestPos = -1;
-    for (let i = lo; i <= hi; i++) {
-      if (c[i] > bestVal) { bestVal = c[i]; bestPos = i; }
-    }
-    if (bestVal > maxVal * SUBHARMONIC_THRESHOLD) {
-      maxVal = bestVal;
-      maxPos = bestPos;
+  // Step 3: Absolute threshold — find first tau >= tauMin where CMNDF dips below threshold,
+  // then walk to the local minimum (prefers fundamental over harmonics)
+  let bestTau = -1;
+  for (let tau = tauMin; tau < tauMax; tau++) {
+    if (cmndf[tau] < YIN_THRESHOLD) {
+      // Walk to local minimum
+      while (tau + 1 <= tauMax && cmndf[tau + 1] < cmndf[tau]) tau++;
+      bestTau = tau;
+      break;
     }
   }
 
-  if (maxPos > 0 && maxPos < len - 1) {
-    const a = c[maxPos - 1];
-    const b = c[maxPos];
-    const cVal = c[maxPos + 1];
-    const shift = (a - cVal) / (2 * (a - 2 * b + cVal));
+  // Step 4: Fallback — if no tau crossed the threshold, use global CMNDF minimum
+  if (bestTau === -1) {
+    let minVal = Infinity;
+    for (let tau = tauMin; tau <= tauMax; tau++) {
+      if (cmndf[tau] < minVal) {
+        minVal = cmndf[tau];
+        bestTau = tau;
+      }
+    }
+    // Reject if best dip is too weak
+    if (minVal > YIN_CONFIDENCE_MAX) return -1;
+  }
+
+  if (bestTau <= 0) return -1;
+
+  // Step 5: Parabolic interpolation for sub-sample refinement
+  if (bestTau > 0 && bestTau < tauMax) {
+    const a = cmndf[bestTau - 1];
+    const b = cmndf[bestTau];
+    const c = cmndf[bestTau + 1];
+    const shift = (a - c) / (2 * (a - 2 * b + c));
     if (Math.abs(shift) < 1) {
-      maxPos += shift;
+      bestTau += shift;
     }
   }
 
-  const T0 = maxPos;
-  if (T0 === 0 || T0 === -1) return -1;
-
-  // Confidence check: reject weak or ambiguous detections
-  const confidence = c[Math.round(T0)] / c[0];
-  if (confidence < MIN_CORRELATION) return -1;
-
-  return sampleRate / T0;
+  return sampleRate / bestTau;
 }
 
 // ── Frequency → nearest string + cents ──
@@ -662,6 +664,14 @@ function findNearestString(freq) {
     }
   }
   return { string: STRINGS[bestIdx], cents: bestCents, index: bestIdx };
+}
+
+const NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B'];
+function freqToNoteName(freq) {
+  const midi = 12 * Math.log2(freq / 440) + 69;
+  const note = Math.round(midi);
+  const octave = Math.floor(note / 12) - 1;
+  return NOTE_NAMES[note % 12] + octave;
 }
 
 // ── Octave error correction ──
@@ -839,7 +849,7 @@ function clearMeterDisplay() {
 
 // ── Pitch detection helpers ──
 function detectPitch(buf) {
-  let freq = autoCorrelate(buf, audioCtx.sampleRate);
+  let freq = yinDetect(buf, audioCtx.sampleRate);
   if (freq <= 0) return null;
 
   freq = correctOctaveErrors(freq);
@@ -864,6 +874,7 @@ function updateHysteresis(resultIndex) {
     if (detState.candidateCount >= NOTE_HOLD_FRAMES) {
       detState.currentNoteIndex = detState.candidateNoteIndex;
       detState.candidateCount = 0;
+      smoothedFreq = 0;
     }
   }
 }
@@ -900,11 +911,20 @@ function tuningLoop() {
     const color = centsColor(cents);
 
     detState.targetCents = cents;
-    updateHysteresis(result.index);
 
-    detState.targetBallScale = 1;
-    if (detState.currentNoteIndex >= 0) {
-      updateDetectionDisplay(cents, color);
+    if (Math.abs(cents) >= OFF_STRING_CENTS) {
+      clearDetectedBtns();
+      stopVibrate();
+      detectedNoteEl.textContent = freqToNoteName(freq);
+      detectedNoteEl.style.color = COLOR_NOTE_DEFAULT;
+      detectedFreqEl.textContent = freq.toFixed(1) + ' Hz';
+      detState.targetBallScale = 0;
+    } else {
+      updateHysteresis(result.index);
+      detState.targetBallScale = 1;
+      if (detState.currentNoteIndex >= 0) {
+        updateDetectionDisplay(cents, color);
+      }
     }
   } else {
     detState.noSignalCount++;
