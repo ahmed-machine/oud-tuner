@@ -351,6 +351,18 @@ const FREQ_SMOOTH_OLD = 1 - FREQ_SMOOTH_NEW;
 const LERP_FACTOR = 0.08;
 const BALL_SCALE_SPEED = 0.08;
 
+// Median filter (outlier rejection before EMA)
+const MEDIAN_WINDOW = 5;
+const _freqRing = new Float32Array(MEDIAN_WINDOW);
+let _freqRingIdx = 0;
+let _freqRingFilled = 0;
+
+function resetMedianFilter() {
+  _freqRing.fill(0);
+  _freqRingIdx = 0;
+  _freqRingFilled = 0;
+}
+
 // Metronome
 const METRO_BEATS = 8;
 const METRO_BPM_MIN = 30;
@@ -571,10 +583,78 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Pitch detection (YIN algorithm) ──
-// de Cheveigné, A. & Kawahara, H. (2002). "YIN, a fundamental frequency
-// estimator for speech and music." JASA 111(4), 1917-1930.
-// https://doi.org/10.1121/1.1458024
+// ── Pitch detection pipeline ──
+//
+// Signal → YIN (fundamental frequency) → octave correction → median filter → EMA
+//
+// 1. YIN algorithm detects the fundamental frequency from the audio buffer.
+//    Uses FFT-based autocorrelation via the Wiener–Khinchin theorem for O(n log n)
+//    computation of the difference function, then CMNDF thresholding + parabolic
+//    interpolation for sub-sample accuracy.
+//    Paper: https://doi.org/10.1121/1.1458024
+//    Theorem: https://en.wikipedia.org/wiki/Wiener%E2%80%93Khinchin_theorem
+//
+// 2. Octave correction picks freq, freq/2, or freq*2 — biased toward the currently
+//    tracked string to prevent spurious jumps.
+//
+// 3. A 5-sample median filter rejects outlier frames before they reach the EMA,
+//    giving much steadier readings than EMA alone.
+//    https://en.wikipedia.org/wiki/Median_filter
+//
+// 4. Exponential moving average (α=0.35) smooths the median-filtered frequency.
+//    A separate display lerp (0.08) animates the meter ball.
+
+// ── Radix-2 Cooley-Tukey FFT (iterative, in-place) ──
+// Operates on separate real/imaginary Float64Arrays of length N (must be power of 2).
+// inverse=true computes the IFFT with 1/N scaling.
+function fft(re, im, N, inverse) {
+  // Bit-reversal permutation
+  for (let i = 1, j = 0; i < N; i++) {
+    let bit = N >> 1;
+    while (j & bit) { j ^= bit; bit >>= 1; }
+    j ^= bit;
+    if (i < j) {
+      let tmp = re[i]; re[i] = re[j]; re[j] = tmp;
+      tmp = im[i]; im[i] = im[j]; im[j] = tmp;
+    }
+  }
+  // Butterfly passes
+  const dir = inverse ? -1 : 1;
+  for (let len = 2; len <= N; len <<= 1) {
+    const halfLen = len >> 1;
+    const angle = dir * (-2 * Math.PI / len);
+    const wRe = Math.cos(angle);
+    const wIm = Math.sin(angle);
+    for (let i = 0; i < N; i += len) {
+      let curRe = 1, curIm = 0;
+      for (let k = 0; k < halfLen; k++) {
+        const evenIdx = i + k;
+        const oddIdx = evenIdx + halfLen;
+        const tRe = curRe * re[oddIdx] - curIm * im[oddIdx];
+        const tIm = curRe * im[oddIdx] + curIm * re[oddIdx];
+        re[oddIdx] = re[evenIdx] - tRe;
+        im[oddIdx] = im[evenIdx] - tIm;
+        re[evenIdx] += tRe;
+        im[evenIdx] += tIm;
+        const nextRe = curRe * wRe - curIm * wIm;
+        curIm = curRe * wIm + curIm * wRe;
+        curRe = nextRe;
+      }
+    }
+  }
+  if (inverse) {
+    for (let i = 0; i < N; i++) { re[i] /= N; im[i] /= N; }
+  }
+}
+
+// Pre-allocated FFT buffers (zero-padded length = 2 * FFT_SIZE)
+const YIN_FFT_N = FFT_SIZE * 2;
+const _fftRe = new Float64Array(YIN_FFT_N);
+const _fftIm = new Float64Array(YIN_FFT_N);
+const _acRe  = new Float64Array(YIN_FFT_N);
+const _acIm  = new Float64Array(YIN_FFT_N);
+
+// ── YIN fundamental frequency estimator ──
 function yinDetect(buf, sampleRate) {
   const SIZE = buf.length;
 
@@ -590,15 +670,39 @@ function yinDetect(buf, sampleRate) {
   const tauMax = Math.min(Math.ceil(sampleRate / YIN_MIN_FREQ), Math.floor(SIZE / 2));
   if (tauMax <= tauMin) return -1;
 
-  // Step 1: Difference function  d(tau) = SUM[ (x[j] - x[j+tau])^2 ]
+  // Step 1: Difference function via Wiener-Khinchin theorem (FFT-based)
+  // d(tau) = m(tau) + m'(tau) - 2*r(tau)
+  // where r(tau) = autocorrelation computed as IFFT(|FFT(x)|^2)
+  const N = YIN_FFT_N;
+
+  // 1a. Copy signal into FFT buffer with zero-padding
+  for (let i = 0; i < SIZE; i++) _fftRe[i] = buf[i];
+  for (let i = SIZE; i < N; i++) _fftRe[i] = 0;
+  _fftIm.fill(0);
+
+  // 1b. Forward FFT
+  fft(_fftRe, _fftIm, N, false);
+
+  // 1c. Power spectrum -> _acRe
+  for (let i = 0; i < N; i++) {
+    _acRe[i] = _fftRe[i] * _fftRe[i] + _fftIm[i] * _fftIm[i];
+    _acIm[i] = 0;
+  }
+
+  // 1d. Inverse FFT -> _acRe now holds autocorrelation r(tau)
+  fft(_acRe, _acIm, N, true);
+
+  // 1e. Build energy prefix sum (reuse _fftRe, only need SIZE+1 entries)
+  _fftRe[0] = 0;
+  for (let i = 0; i < SIZE; i++) _fftRe[i + 1] = _fftRe[i] + buf[i] * buf[i];
+  const totalEnergy = _fftRe[SIZE];
+
+  // 1f. Assemble difference function
   const diff = new Float32Array(tauMax + 1);
   for (let tau = 1; tau <= tauMax; tau++) {
-    let sum = 0;
-    for (let j = 0; j < SIZE - tau; j++) {
-      const delta = buf[j] - buf[j + tau];
-      sum += delta * delta;
-    }
-    diff[tau] = sum;
+    // m(tau) = sum x[j]^2 for j=0..SIZE-1-tau = prefixEnergy[SIZE-tau]
+    // m'(tau) = sum x[j]^2 for j=tau..SIZE-1 = totalEnergy - prefixEnergy[tau]
+    diff[tau] = _fftRe[SIZE - tau] + (totalEnergy - _fftRe[tau]) - 2 * _acRe[tau];
   }
 
   // Step 2: Cumulative mean normalized difference function (CMNDF)
@@ -677,6 +781,36 @@ function freqToNoteName(freq) {
 // ── Octave error correction ──
 function correctOctaveErrors(freq) {
   const candidates = [freq, freq / 2, freq * 2];
+  const currentIdx = detState.currentNoteIndex;
+
+  // Context-aware: if we're already tracking a note, bias toward it
+  if (currentIdx >= 0) {
+    const currentStringFreq = STRINGS[currentIdx].freq;
+    let bestFreq = candidates[0];
+    let bestCents = Math.abs(1200 * Math.log2(candidates[0] / currentStringFreq));
+    for (let i = 1; i < candidates.length; i++) {
+      const cents = Math.abs(1200 * Math.log2(candidates[i] / currentStringFreq));
+      if (cents < bestCents) {
+        bestCents = cents;
+        bestFreq = candidates[i];
+      }
+    }
+    // Only switch away from the current string if another candidate is
+    // closer to a different string by a significant margin (> 30 cents)
+    const currentResult = { cents: bestCents, freq: bestFreq };
+    for (let i = 0; i < candidates.length; i++) {
+      const result = findNearestString(candidates[i]);
+      if (result.index !== currentIdx) {
+        const advantageCents = currentResult.cents - Math.abs(result.cents);
+        if (advantageCents > 30) {
+          return candidates[i];
+        }
+      }
+    }
+    return currentResult.freq;
+  }
+
+  // No current note — pick whichever candidate is closest to any string
   let bestFreq = candidates[0];
   let bestCents = Math.abs(findNearestString(candidates[0]).cents);
   for (let i = 1; i < candidates.length; i++) {
@@ -837,6 +971,7 @@ function resetDetectionState() {
   detState.targetBallScale = 0;
   detState.displayBallScale = 0;
   smoothedFreq = 0;
+  resetMedianFilter();
   clearDetectedBtns();
   stopVibrate();
 }
@@ -853,6 +988,17 @@ function detectPitch(buf) {
   if (freq <= 0) return null;
 
   freq = correctOctaveErrors(freq);
+
+  // Median filter — reject outlier frames before EMA
+  _freqRing[_freqRingIdx] = freq;
+  _freqRingIdx = (_freqRingIdx + 1) % MEDIAN_WINDOW;
+  if (_freqRingFilled < MEDIAN_WINDOW) _freqRingFilled++;
+
+  if (_freqRingFilled >= MEDIAN_WINDOW) {
+    const tmp = Array.from(_freqRing);
+    tmp.sort((a, b) => a - b);
+    freq = tmp[Math.floor(MEDIAN_WINDOW / 2)];
+  }
 
   if (smoothedFreq === 0) {
     smoothedFreq = freq;
@@ -875,6 +1021,7 @@ function updateHysteresis(resultIndex) {
       detState.currentNoteIndex = detState.candidateNoteIndex;
       detState.candidateCount = 0;
       smoothedFreq = 0;
+      resetMedianFilter();
     }
   }
 }
