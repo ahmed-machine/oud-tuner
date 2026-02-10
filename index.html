@@ -332,36 +332,27 @@ const OUD_PLUCK_DECAY = 0.03;
 const OUD_PLUCK_AMP = 0.4;
 const OUD_PLUCK_FILTER_Q = 2;
 
+// Pitch detection
 const FFT_SIZE = 8192;
-const RMS_THRESHOLD_DB = -40;  // minimum signal level in decibels
-// YIN pitch detection
+const RMS_THRESHOLD_DB = -40;
 const YIN_THRESHOLD = 0.15;       // CMNDF absolute threshold (paper recommends 0.10-0.20)
 const YIN_CONFIDENCE_MAX = 0.30;  // reject if best CMNDF dip exceeds this
 const YIN_MIN_FREQ = 55;          // Hz — search floor (below C2=65.41)
 const YIN_MAX_FREQ = 600;         // Hz — search ceiling (above C4=261.63)
 
-// Signal isolation
 const NOTE_HOLD_FRAMES = 8;        // frames a new note must be closest before switching
 const SIGNAL_LOST_FRAMES = 15;     // frames of no detection before clearing display
 const OFF_STRING_CENTS = 50;       // cents threshold to consider pitch "not on a string"
 
-// Smoothing
 const FREQ_SMOOTH_NEW = 0.35;
 const FREQ_SMOOTH_OLD = 1 - FREQ_SMOOTH_NEW;
 const LERP_FACTOR = 0.08;
 const BALL_SCALE_SPEED = 0.08;
 
-// Median filter (outlier rejection before EMA)
 const MEDIAN_WINDOW = 5;
 const _freqRing = new Float32Array(MEDIAN_WINDOW);
 let _freqRingIdx = 0;
 let _freqRingFilled = 0;
-
-function resetMedianFilter() {
-  _freqRing.fill(0);
-  _freqRingIdx = 0;
-  _freqRingFilled = 0;
-}
 
 // Metronome
 const METRO_BEATS = 8;
@@ -526,7 +517,7 @@ function createOudTone(ctx, freq) {
     },
   };
 
-  // Fire onended when the first harmonic osc ends (all share the same stop time)
+  // All harmonics share the same stop time; first osc fires onended
   sources[0].onended = () => {
     ended = true;
     masterGain.disconnect();
@@ -583,7 +574,7 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
-// ── Pitch detection pipeline ──
+  // ── Pitch detection pipeline ── (thank you internet)
 //
 // Signal → YIN (fundamental frequency) → octave correction → median filter → EMA
 //
@@ -597,8 +588,7 @@ document.addEventListener('keydown', (e) => {
 // 2. Octave correction picks freq, freq/2, or freq*2 — biased toward the currently
 //    tracked string to prevent spurious jumps.
 //
-// 3. A 5-sample median filter rejects outlier frames before they reach the EMA,
-//    giving much steadier readings than EMA alone.
+// 3. A 5-sample median filter rejects outlier frames before they reach the EMA.
 //    https://en.wikipedia.org/wiki/Median_filter
 //
 // 4. Exponential moving average (α=0.35) smooths the median-filtered frequency.
@@ -706,7 +696,7 @@ function yinDetect(buf, sampleRate) {
   }
 
   // Step 2: Cumulative mean normalized difference function (CMNDF)
-  // d'(tau) = d(tau) * tau / runningSum, with d'(0) = 1
+  // d_norm(tau) = d(tau) * tau / runningSum, with d_norm(0) = 1
   const cmndf = new Float32Array(tauMax + 1);
   cmndf[0] = 1;
   let runningSum = 0;
@@ -847,8 +837,8 @@ const detState = {
   targetCents: 0,
   displayCents: 0,
   drawFrameId: null,
-  currentNoteIndex: -1,     // index of the currently displayed note
-  candidateNoteIndex: -1,   // index of the note being considered
+  currentNoteIndex: -1,
+  candidateNoteIndex: -1,
   candidateCount: 0,        // frames the candidate has been consistent
   noSignalCount: 0,         // frames since last valid detection
   targetBallScale: 0,       // 1 when signal detected, 0 when lost
@@ -960,6 +950,12 @@ function startDrawLoop() {
 // ── Detection state helpers ──
 function clearDetectedBtns() {
   stringBtns.forEach(b => b.classList.remove('detected', 'vibrating'));
+}
+
+function resetMedianFilter() {
+  _freqRing.fill(0);
+  _freqRingIdx = 0;
+  _freqRingFilled = 0;
 }
 
 function resetDetectionState() {
